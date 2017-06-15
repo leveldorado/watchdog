@@ -5,8 +5,9 @@ authors = ["Vasyl <leveldorado@gmail.com>"]
 
 [dependencies]
 
+
 serde = "1.0.2"
 serde_json = "1.0.2"
 serde_derive = "1.0.2"
-json_str = "0.5.0"
 chrono = { version = "0.3", features = ["serde"] }
+uuid = "0.4"

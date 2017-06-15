@@ -13,6 +13,9 @@ use self::chrono::prelude::*;
 pub struct App {
     image: String,
     name: String, 
+    port: u32,
+    currentContainerName: String,
+    previousContainerName: String,
     #[serde(default="UTC::now")]
     pub started_at: DateTime<UTC>,        
 }
@@ -46,3 +49,16 @@ pub fn read_conf(path: &str) -> Result<App, String> {
         Err(e) => Err(e.description().to_string()),
     }
 }
+
+pub fn track(app: &mut App) {
+     
+}
+
+
+pub fn start(app: &mut App) {
+    app.currentContainerName = app.name + "_" + app.name;
+    let cmd = "docker run --name " + app.currentContainerName ;
+
+}
+
+

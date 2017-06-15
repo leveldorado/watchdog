@@ -8,10 +8,11 @@ fn main() {
     println!("Hello, world!");
     let  r = app::read_conf("/home/vasyl/rust/watchdog/examples/config/app.json");
     match r {
-        Ok(v) =>  println!("{:?}", v),
+        Ok(mut v) =>  {
+            app::track(&mut v);
+            },
         Err(e) => println!("{}", e),
     }
-   
 }
 
 
