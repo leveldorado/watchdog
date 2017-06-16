@@ -1,4 +1,5 @@
 {
     "image": "nginx",
-    "name": "ad"
+    "name": "ad",
+    "port": 5000
 }

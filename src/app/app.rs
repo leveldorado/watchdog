@@ -5,6 +5,7 @@ use std::fs::File;
 use std::io::Read;
 use std::error::Error;
 use self::chrono::prelude::*;
+use std::process::{Command, Stdio};
 
 
 
@@ -14,8 +15,10 @@ pub struct App {
     image: String,
     name: String, 
     port: u32,
-    currentContainerName: String,
-    previousContainerName: String,
+    #[serde(skip)]
+    current_container_name: String,
+    #[serde(skip)]
+    previous_container_name: String,
     #[serde(default="UTC::now")]
     pub started_at: DateTime<UTC>,        
 }
@@ -50,15 +53,18 @@ pub fn read_conf(path: &str) -> Result<App, String> {
     }
 }
 
-pub fn track(app: &mut App) {
-     
-}
 
 
-pub fn start(app: &mut App) {
-    app.currentContainerName = app.name + "_" + app.name;
-    let cmd = "docker run --name " + app.currentContainerName ;
-
+impl App {
+    pub fn start(&mut self) {
+        let cmd = Command::new("docker").args(&["run", "--name", "test", "-p", "5000:5000", "-d", "nginx"]).
+        stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().expect("work");
+        let mut s = String::new(); 
+        match cmd.stdout.unwrap().read_to_string(&mut s) {
+            Ok(_) => println!("{}", s),
+            Err(e) => println!("{:?}", e),
+        }
+    }
 }
 
 
