@@ -1,11 +1,13 @@
 extern crate serde_json;
 extern crate serde; 
 extern crate chrono;
+extern crate uuid;
 use std::fs::File;
 use std::io::Read;
 use std::error::Error;
 use self::chrono::prelude::*;
 use std::process::{Command, Stdio};
+use self::uuid::Uuid;
 
 
 
@@ -57,7 +59,8 @@ pub fn read_conf(path: &str) -> Result<App, String> {
 
 impl App {
     pub fn start(&mut self) {
-        let cmd = Command::new("docker").args(&["run", "--name", "test", "-p", "5000:5000", "-d", "nginx"]).
+        let args = self.build_run_cmd_args();
+        let cmd = Command::new("docker").args(args).
         stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().expect("work");
         let mut s = String::new(); 
         match cmd.stdout.unwrap().read_to_string(&mut s) {
@@ -67,4 +70,23 @@ impl App {
     }
 }
 
+
+const WATCHDOG_PREFIX: &str = "watchdog";   
+
+impl App {
+    fn build_run_cmd_args(&mut self) -> Vec<String> {
+        let mut cmd = vec!["run".to_string(), "--name".to_string()];
+        let  container_name = format!("{}_{}_{}", WATCHDOG_PREFIX, self.name, Uuid::new_v4().to_string());
+        cmd.push(container_name);
+        cmd.push("-p".to_string());
+        let port = format!("{}:{}", self.port, self.port);
+        cmd.push(port);
+        cmd.push("-d".to_string());
+        let image = format!("{}", self.image);
+        cmd.push(image);
+        return cmd;
+    }
+}
+
+   
 
