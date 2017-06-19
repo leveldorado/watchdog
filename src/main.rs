@@ -6,7 +6,8 @@ extern crate serde_derive;
 
 fn main() {
     println!("Hello, world!");
-    let mut r = app::read_conf("/home/vasyl/rust/watchdog/examples/config/app.json").expect("UHU");
+    let  buff = String::new();
+    let mut r = app::read_conf("/home/vasyl/rust/watchdog/examples/config/app.json", buff).expect("UHU");
     r.start()
 }
 
