@@ -8,8 +8,16 @@ use std::error::Error;
 use self::chrono::prelude::*;
 use std::process::{Command, Stdio};
 use self::uuid::Uuid;
+use std::thread;
+use std::sync::mpsc;
+use std::sync::mpsc::{Sender, Receiver};
+use std::time::Duration;
 
-
+#[derive(Serialize, Deserialize, Debug)]
+enum HealthCheckType {
+    TCP,
+    HTTP,
+}
 
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -17,6 +25,10 @@ pub struct App {
     image: String,
     name: String,
     port: u32,
+    #[serde(skip, default="UTC::now")]
+    last_health_check: DateTime<UTC>,
+    health_check_type: HealthCheckType,
+    health_check_interval: Duration,
     #[serde(skip)]
     current_container_name: String,
     #[serde(default="UTC::now")]
@@ -25,27 +37,16 @@ pub struct App {
 
 
 
-
-
-
-
-
-
-
-
-pub fn read_conf(path: &str, mut j_link: String) -> Result<App, String> {
+pub fn read_conf<T>(path: &str) -> Result<T, String>
+    where T: for<'de> serde::Deserialize<'de>
+{
     let r = File::open(path);
-    let mut f;
+    let f;
     match r {
         Ok(v) => f = v,
         Err(e) => return Err(e.description().to_string()),
     }
-    let r = f.read_to_string(&mut j_link);
-    match r {
-        Ok(_) => {}
-        Err(e) => return Err(e.description().to_string()),
-    }
-    let r: Result<App, serde_json::Error> = serde_json::from_str(j_link.as_ref());
+    let r: Result<T, serde_json::Error> = serde_json::from_reader(f);
     match r {
         Ok(v) => Ok(v),
         Err(e) => Err(e.description().to_string()),
@@ -55,10 +56,17 @@ pub fn read_conf(path: &str, mut j_link: String) -> Result<App, String> {
 
 
 impl App {
-    pub fn start(&mut self) {
+    pub fn restart(&mut self, ask_config: &Sender<bool>, config_chan: &Receiver<Config>) {
         self.clear_previous_container();
-        let vars: Vec<EnvVar> = Default::default();
-        let args = self.build_run_cmd_args(vars);
+        self.start(ask_config, config_chan);
+    }
+}
+
+impl App {
+    pub fn start(&mut self, ask_config: &Sender<bool>, config_chan: &Receiver<Config>) {
+        ask_config.send(true).unwrap();
+        let config = config_chan.recv().unwrap();
+        let args = self.build_run_cmd_args(config.vars);
         self.do_command(args);
         self.started_at = UTC::now();
     }
@@ -133,9 +141,75 @@ impl App {
 }
 
 
-
-#[derive(Debug)]
+#[derive(Debug, Clone, Deserialize)]
 struct EnvVar {
     name: String,
     value: String,
+}
+
+
+
+#[derive(Default, Clone, Deserialize)]
+pub struct Config {
+    hash_sum: String,
+    vars: Vec<EnvVar>,
+}
+
+
+
+pub fn run() {
+    let (app_sender, app_receiver): (Sender<AppStop>, Receiver<AppStop>) = mpsc::channel();
+    thread::spawn(move || match read_conf("/home/vasyl/rust/watchdog/examples/config/app.json") {
+                      Ok(app) => app_sender.send(AppStop::App(app)).unwrap(),
+                      Err(e) => {
+                          println!("{}", e);
+                          app_sender.send(AppStop::Stop).unwrap();
+                      }
+                  });
+    let (checked_app_sender, checked_app_receiver): (Sender<App>, Receiver<App>) = mpsc::channel();
+    let (config_ask_sender, config_ask_receiver): (Sender<bool>, Receiver<bool>) = mpsc::channel();
+    let (config_sender, config_receiver): (Sender<Config>, Receiver<Config>) = mpsc::channel();
+    handle_app(&app_receiver,
+               &checked_app_sender,
+               &config_ask_sender,
+               &config_receiver);
+}
+
+
+pub enum AppStop {
+    App(App),
+    Stop,
+}
+
+fn handle_app(r: &Receiver<AppStop>,
+              s: &Sender<App>,
+              ask_config: &Sender<bool>,
+              config_chan: &Receiver<Config>) {
+    loop {
+        let mut app: App;
+        match r.recv().unwrap() {
+            AppStop::Stop => return,
+            AppStop::App(a) => app = a,
+        }
+        let last_health_check_interval = UTC::now()
+            .signed_duration_since(app.last_health_check)
+            .to_std()
+            .unwrap();
+        if app.current_container_name.len() == 0 {
+            app.start(ask_config, config_chan);
+        } else if last_health_check_interval > app.health_check_interval {
+            if !app.check_health() {
+                app.restart(ask_config, config_chan);
+            }
+        }
+        let app = app;
+        s.send(app).unwrap();
+    }
+}
+
+
+impl App {
+    fn check_health(&mut self) -> bool {
+        return true;
+    }
 }
