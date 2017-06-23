@@ -14,6 +14,7 @@ use iron::prelude::Plugin;
 use std::error::Error;
 use iron::{IronError, Response, Request, IronResult};
 use iron::status;
+use std::thread;
 
 
 
@@ -22,15 +23,17 @@ struct Controller {
     apps: HashMap<String, app::App>,
     config: Vec<app::Config>,
     dead: bus::Bus<bool>,
-    config_stop_receiver: Receiver<configStop>,
-    config_stop_sender: Sender<configStop>,
+    config_stop_receiver: Receiver<ConfigStop>,
+    config_stop_sender: Sender<ConfigStop>,
     config_receiver: Receiver<app::Config>,
     config_sender: Sender<app::Config>,
+    done_receiver: Arc<Mutex<Receiver<Done>>>,
+    done_sender: Sender<Done>,
 }
 
 
 #[derive(Clone)]
-enum configStop {
+enum ConfigStop {
     Some(app::Config),
     Stop,
     Request,
@@ -39,10 +42,11 @@ enum configStop {
 
 impl Controller {
     fn new() -> Self {
-        let (config_stop_sender, config_stop_receiver): (Sender<configStop>,
-                                                         Receiver<configStop>) = mpsc::channel();
+        let (config_stop_sender, config_stop_receiver): (Sender<ConfigStop>,
+                                                         Receiver<ConfigStop>) = mpsc::channel();
         let (config_sender, config_receiver): (Sender<app::Config>, Receiver<app::Config>) =
             mpsc::channel();
+        let (done_sender, done_receiver): (Sender<Done>, Receiver<Done>) = mpsc::channel();
         Controller {
             apps: HashMap::new(),
             config: vec![],
@@ -51,10 +55,12 @@ impl Controller {
             config_stop_sender: config_stop_sender,
             config_receiver: config_receiver,
             config_sender: config_sender,
+            done_receiver: Arc::new(Mutex::new(done_receiver)),
+            done_sender: done_sender,
         }
     }
 
-    fn handle_config(&mut self, done_sender: &Sender<Done>) {
+    fn handle_config(&mut self) {
         match self.config_stop_receiver.recv() {
             Ok(data) => {}
             Err(e) => {
@@ -92,20 +98,19 @@ impl Router {
         }
     }
     fn register_config_handler(&mut self) {
-        let (done_sender, done_receiver): (Sender<Done>, Receiver<Done>) = mpsc::channel();
         let sender = Arc::new(Mutex::new(self.contr.config_stop_sender.clone())).clone();
-        let done_receiver = Arc::new(Mutex::new(done_receiver)).clone();
+        let done_receiver = self.contr.done_receiver.clone();
         self.routes
             .post("/config",
                   move |req: &mut Request| -> IronResult<Response> {
-                      if let parseAndSendResult::Err(resp) = parse_and_send_config(&sender, req) {
+                      if let ParseAndSendResult::Err(resp) = parse_and_send_config(&sender, req) {
                           return resp;
                       }
                       return check_done_receiver(&done_receiver);
 
                   },
                   "config");
-        self.contr.handle_config(&done_sender);
+        thread::spawn(move |c: &Controller| { c.handle_config(); });
     }
 
     fn register_app_handler(&mut self) {
@@ -145,29 +150,29 @@ fn check_done_receiver(done_receiver: &Arc<Mutex<Receiver<Done>>>) -> IronResult
     }
 }
 
-enum parseAndSendResult {
+enum ParseAndSendResult {
     Err(IronResult<Response>),
     Ok,
 }
 
-fn parse_and_send_config(sender: &Arc<Mutex<Sender<configStop>>>,
+fn parse_and_send_config(sender: &Arc<Mutex<Sender<ConfigStop>>>,
                          req: &mut Request)
-                         -> parseAndSendResult {
+                         -> ParseAndSendResult {
     match req.get::<bodyparser::Struct<app::Config>>() {
         Ok(Some(body)) => {
             match sender.lock() {
                 Ok(s) => {
-                    if let Err(e) = s.send(configStop::Some(body)) {
-                        return parseAndSendResult::Err(Err(IronError::new(e, status::InternalServerError)));
+                    if let Err(e) = s.send(ConfigStop::Some(body)) {
+                        return ParseAndSendResult::Err(Err(IronError::new(e, status::InternalServerError)));
                     }
                 }
                 Err(e) => {
-                    return parseAndSendResult::Err(Ok(Response::with((status::InternalServerError, e.description()))));
+                    return ParseAndSendResult::Err(Ok(Response::with((status::InternalServerError, e.description()))));
                 }
             }
         }
-        Ok(None) => return parseAndSendResult::Err(Ok(iron::Response::with(status::BadRequest))),
-        Err(e) => return parseAndSendResult::Err(Err(IronError::new(e, status::BadRequest))),
+        Ok(None) => return ParseAndSendResult::Err(Ok(iron::Response::with(status::BadRequest))),
+        Err(e) => return ParseAndSendResult::Err(Err(IronError::new(e, status::BadRequest))),
     }
-    return parseAndSendResult::Ok;
+    return ParseAndSendResult::Ok;
 }
