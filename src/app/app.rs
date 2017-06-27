@@ -15,6 +15,7 @@ extern crate tokio_core;
 use self::futures::Future;
 use self::hyper::client::HttpConnector;
 use std::str::FromStr;
+use std::net::TcpStream;
 
 
 
@@ -41,6 +42,7 @@ pub struct App {
     health_check_interval: Duration,
     unhealth_threshould: u32,
     health_threshould: u32,
+    max_restarts: u32,
     #[serde(skip)]
     unhealth_count: u32,
     health_count: u32,
@@ -134,7 +136,11 @@ impl App {
     }
 
     fn check_tcp_health(&self) -> HealthCheckRes {
-        return HealthCheckRes::Ok;
+        let url = format!("localhost:{}", self.port);
+        match TcpStream::connect(url) {
+            Ok(_) => HealthCheckRes::Ok,
+            Err(_) => HealthCheckRes::UnHealth,
+        }
     }
     pub fn start(&mut self) -> Res {
         let variables: Vec<config::EnvVar>;
