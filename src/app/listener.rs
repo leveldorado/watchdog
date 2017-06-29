@@ -11,7 +11,9 @@ use app::config;
 use app::containers;
 use app::App;
 
-extern crate serde_json;   
+extern crate serde_json;  
+extern crate urlencoded;
+use self::urlencoded::UrlEncodedQuery; 
 
 
 
@@ -104,5 +106,46 @@ fn register_containers_routes(r: &mut router::Router) {
                           }
                       }
                   },
-                  "set_app");           
+                  "set_app");  
+      r.get("/app",
+                  move |req: &mut Request| -> IronResult<Response> {
+                      match req.get_ref::<UrlEncodedQuery>() {
+                          Ok(m) => {
+                              match m.get("app") {
+                                  Some(name) => {
+                                      let app = containers::get_app(name[0].clone());
+                                      match serde_json::to_string(&app) {
+                                         Ok(data) => return Ok(Response::with((status::Ok, data))),
+                                         Err(e) => return Ok(Response::with((status::InternalServerError, e.description()))),
+                                      }
+                                  },   
+                                  None => {
+                                      return Ok(Response::with(status::BadRequest));
+                                  },
+                              }
+                          },
+                          Err(e) => return Ok(Response::with((status::InternalServerError, e.description()))),
+                      }
+                  },
+                  "get_app");   
+
+
+      r.delete("/app",
+                  move |req: &mut Request| -> IronResult<Response> {
+                      match req.get_ref::<UrlEncodedQuery>() {
+                          Ok(m) => {
+                              match m.get("app") {
+                                  Some(name) => {
+                                      containers::remove_app(name[0].as_ref());
+                                      return Ok(Response::with(status::Ok));
+                                  },     
+                                  None => {
+                                      return Ok(Response::with(status::BadRequest));
+                                  },
+                              }
+                          },
+                          Err(e) => return Ok(Response::with((status::InternalServerError, e.description()))),
+                      }
+                  },
+                  "delete_app");                    
 }

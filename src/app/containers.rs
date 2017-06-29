@@ -64,6 +64,32 @@ fn add_app(a: &mut App) -> OkErr {
     }
 }
 
+pub fn get_app(name: String) -> Result<App, String> {
+    match CONTAINERS.lock() {
+        Ok(c) => {
+            let name: String = name.clone();
+            match c.get(&name) {
+                Some(app) => Ok(app.clone()),
+                None => Err("Not found".to_string()),
+            }
+        }
+        Err(e) => Err(e.description().to_string()),
+    }
+}
+
+
+pub fn remove_app(name: &str) {
+    match CONTAINERS.lock() {
+        Ok(mut c) => {
+            match c.remove(name) {
+                Some(_) => {}
+                None => {}
+            }
+        }
+        Err(e) => println!("{:?}", e),
+    }
+}
+
 
 fn watch_interval() -> Duration {
     return Duration::new(1, 0);
