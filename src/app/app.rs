@@ -58,6 +58,12 @@ pub struct App {
     #[serde(skip)]
     unhealth_count: u32,
     health_count: u32,
+    memory_notify_limit: String,
+    #[serde(skip)]
+    memory_notify_limit_in_kilobytes: u64,
+    memory_limit: String,
+    #[serde(skip)]
+    memory_limit_in_kilobytes: u64,
     #[serde(default="Default::default")]
     volume: Volume,
     #[serde(default="UTC::now")]
@@ -87,14 +93,44 @@ pub enum HealthCheckRes {
 
 pub enum MemoryCheckRes {
     Ok,
-    Exceed(String),
+    Exceed(u64),
     Err(String),
 }
 
 
 impl App {
+    pub fn convert_string_memory_limit_to_kilobytes(&mut self) -> Result<(), String> {
+        self.memory_limit_in_kilobytes = parse_memory_usage_to_kilobytes(self.memory_limit
+                                                                             .as_ref());
+        self.memory_notify_limit_in_kilobytes =
+            parse_memory_usage_to_kilobytes(self.memory_notify_limit.as_ref());
+        if self.memory_limit_in_kilobytes < self.memory_notify_limit_in_kilobytes {
+            return Err("Memory limit less than notify memory limit".to_string());
+        }
+        return Ok(());
+    }
     pub fn memory_check(&self) -> MemoryCheckRes {
-        return MemoryCheckRes::Ok;
+        let args: Vec<&str> = vec!["stats", "--no-stream=true", self.id.as_ref()];
+        match self.do_command(args) {
+            Res::Ok(output) => {
+                let mem_usage = parse_memory_usage(output.as_ref());
+                if mem_usage > self.memory_limit_in_kilobytes {
+                    return MemoryCheckRes::Exceed(mem_usage);
+                }
+                if mem_usage > self.memory_notify_limit_in_kilobytes {
+                    let message = format!("{} EXCEED MEMORY LIMIT {} at {}",
+                                          self.name,
+                                          self.memory_notify_limit,
+                                          UTC::now());
+                    match send_report(message.as_ref(), message.as_ref()) {
+                        OkErr::Ok => {}
+                        OkErr::Err(e) => println!("{}", e),
+                    }
+                }
+                return MemoryCheckRes::Ok;
+            }
+            Res::Err(e) => return MemoryCheckRes::Err(e),
+        }
     }
     pub fn restart(&mut self, reason: &str) -> OkErr {
         let id = self.id.clone();
@@ -372,5 +408,55 @@ pub fn get_smtp_transport(config: &EmailSettings) -> Result<SmtpTransport, Strin
                           .build())
         }
         Err(e) => return Err(e.description().to_string()),
+    }
+}
+
+
+fn parse_memory_usage(docker_output: &str) -> u64 {
+    let parts: Vec<&str> = docker_output.split("\n").collect();
+    if parts.len() != 2 {
+        return 0;
+    }
+    let split_index: usize;
+    match parts[0].find("MEM USAGE") {
+        Some(index) => split_index = index,
+        None => return 0,
+    }
+    if split_index > parts[1].len() {
+        return 0;
+    }
+    let (_, last_part) = parts[1].split_at(split_index);
+    match last_part.find("/") {
+        Some(index) => {
+            let (memory_usage, _) = last_part.split_at(index);
+            return parse_memory_usage_to_kilobytes(memory_usage.trim());
+        }
+        None => {
+            return 0;
+        }
+    }
+}
+
+
+fn parse_memory_usage_to_kilobytes(memory_usage: &str) -> u64 {
+    let parts: Vec<&str> = memory_usage.split(" ").collect();
+    if parts.len() != 2 {
+        return 0;
+    }
+    let number: u64;
+    match parts[0].parse::<u64>() {
+        Ok(n) => number = n,
+        Err(e) => {
+            number = 0;
+            print!("{}", e);
+        }
+    }
+    match parts[1] {
+        "KiB" => return number,
+        "MiB" => return 1000 * number,
+        "GiB" => return 1000 * 1000 * number,
+        _ => {
+            return number;
+        }
     }
 }

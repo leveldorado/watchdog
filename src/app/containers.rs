@@ -23,6 +23,9 @@ lazy_static! {
 
 pub fn set_app(a: App) -> OkErr {
     let mut a: App = a;
+    if let Err(e) = a.convert_string_memory_limit_to_kilobytes() {
+        return OkErr::Err(e);
+    }
     match CONTAINERS.lock() {
         Ok(mut m) => {
             match m.get(&a.name) {
