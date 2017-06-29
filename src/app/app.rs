@@ -7,6 +7,7 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 use app::config;
 use std::error::Error;
+use std::iter::FromIterator;
 
 extern crate futures;
 extern crate hyper;
@@ -16,6 +17,16 @@ use self::futures::Future;
 use self::hyper::client::HttpConnector;
 use std::str::FromStr;
 use std::net::TcpStream;
+use app::config::OkErr;
+
+extern crate lettre;
+
+use self::lettre::transport::smtp::{SecurityLevel, SmtpTransport, SmtpTransportBuilder};
+use self::lettre::email::EmailBuilder;
+use self::lettre::transport::EmailTransport;
+use self::lettre::transport::smtp::authentication::Mechanism;
+
+use std::env;
 
 
 
@@ -43,6 +54,7 @@ pub struct App {
     unhealth_threshould: u32,
     health_threshould: u32,
     max_restarts: u32,
+    restarts: u32,
     #[serde(skip)]
     unhealth_count: u32,
     health_count: u32,
@@ -73,8 +85,48 @@ pub enum HealthCheckRes {
     Err(String),
 }
 
+pub enum MemoryCheckRes {
+    Ok,
+    Exceed(String),
+    Err(String),
+}
+
 
 impl App {
+    pub fn memory_check(&self) -> MemoryCheckRes {
+        return MemoryCheckRes::Ok;
+    }
+    pub fn restart(&mut self, reason: &str) -> OkErr {
+        let id = self.id.clone();
+        {
+            let args: Vec<&str> = vec!["logs", "--tail=500", id.as_ref()];
+            match self.do_command(args) {
+                Res::Ok(log) => {
+                    println!("{}", log);
+                    match send_report(format!("RESTART {}  DUE TO {}", UTC::now(), reason)
+                                          .as_ref(),
+                                      log.as_ref()) {
+                        OkErr::Ok => {}
+                        OkErr::Err(e) => println!("{}", e),
+                    }
+                    match self.clear() {
+                        Res::Ok(_) => {
+                            match self.start() {
+                                Res::Ok(_) => {
+                                    self.restarts = self.restarts + 1;
+                                    return OkErr::Ok;
+                                }
+                                Res::Err(e) => OkErr::Err(e),
+                            }
+                        }
+                        Res::Err(e) => OkErr::Err(e),
+                    }
+                }
+                Res::Err(e) => OkErr::Err(e),
+            }
+
+        }
+    }
     pub fn health_check(&mut self,
                         cl: &hyper::Client<HttpConnector, hyper::Body>)
                         -> HealthCheckRes {
@@ -148,13 +200,15 @@ impl App {
             config::GetVarsRes::Vars(vars) => variables = vars,
             config::GetVarsRes::Err(e) => return Res::Err(e),
         }
-        let mut args = self.build_run_cmd_args(&variables);
-        if let Res::Err(e) = self.do_command(args) {
-            return Res::Err(e);
+
+        {
+            let args = self.build_run_cmd_args(&variables);
+            if let Res::Err(e) = self.do_command(Vec::from_iter(args.iter().map(String::as_str))) {
+                return Res::Err(e);
+            }
         }
-        args = vec!["ps".to_string(),
-                    "-aqf".to_string(),
-                    format!("\"name={}\"", self.name)];
+        let name_arg: String = format!("\"name={}\"", self.name.clone());
+        let args = vec!["ps", "-aqf", name_arg.as_ref()];
         match self.do_command(args) {
             Res::Ok(id) => {
                 self.id = id;
@@ -165,14 +219,15 @@ impl App {
         }
     }
     pub fn clear(&self) -> Res {
-        let mut args: Vec<String> = vec!["stop".to_string(), self.id.clone()];
+        let id = self.id.clone();
+        let mut args: Vec<&str> = vec!["stop", id.as_ref()];
         if let Res::Err(e) = self.do_command(args) {
             return Res::Err(e);
         }
-        args = vec!["rm".to_string(), self.id.clone()];
+        args = vec!["rm", id.as_ref()];
         return self.do_command(args);
     }
-    fn do_command(&self, args: Vec<String>) -> Res {
+    fn do_command(&self, args: Vec<&str>) -> Res {
         let cmd = Command::new("docker")
             .args(args)
             .stdin(Stdio::piped())
@@ -195,7 +250,7 @@ impl App {
         cmd.push("-p".to_string());
         cmd.push(format!("{}:{}", self.port, self.port));
         cmd.push("-d".to_string());
-        cmd.push(format!("{}", self.image));
+        cmd.push(self.image.clone());
         for var in vars {
             cmd.push(format!("-e {}={}", var.name, var.value))
         }
@@ -224,5 +279,98 @@ fn get_url(port: u32, path: &String) -> URIRes {
     match hyper::Uri::from_str(raw_url.as_ref()) {
         Ok(u) => return URIRes::Ok(u),
         Err(e) => return URIRes::Err(e.description().to_string()),
+    }
+}
+
+
+#[derive(Clone, Default)]
+pub struct EmailSettings {
+    host: String,
+    port: u16,
+    username: String,
+    password: String,
+    report_email: String,
+    from_email: String,
+    from_name: String,
+}
+
+
+fn get_email_settings() -> EmailSettings {
+    let mut settings: EmailSettings = Default::default();
+    match env::var("SMTP_HOST") {
+        Ok(smtp_host) => settings.host = smtp_host,
+        Err(_) => println!("SMTP_HOST is empty"),
+    }
+    match env::var("SMTP_PORT") {
+        Ok(smtp_port) => {
+            match smtp_port.parse::<u16>() {
+                Ok(number_port) => settings.port = number_port,
+                Err(e) => println!("SMTP_PORT {}", e),
+            }
+        }
+        Err(_) => println!("SMTP_PORT is empty"),
+    }
+    match env::var("SMTP_USERNAME") {
+        Ok(smtp_username) => settings.username = smtp_username,
+        Err(_) => println!("SMTP_USERNAME is empty"),
+    }
+    match env::var("SMTP_PASSWORD") {
+        Ok(smtp_password) => settings.password = smtp_password,
+        Err(_) => println!("SMTP_PASSWORD is empty"),
+    }
+    match env::var("REPORT_EMAIL") {
+        Ok(report_email) => settings.report_email = report_email,
+        Err(_) => println!("REPORT_EMAIL is empty"),
+    }
+    match env::var("FROM_EMAIL") {
+        Ok(from_email) => settings.from_email = from_email,
+        Err(_) => println!("FROM_EMAIL is empty"),
+    }
+    match env::var("FROM_NAME") {
+        Ok(from_name) => settings.from_name = from_name,
+        Err(_) => println!("FROM_NAME is empty"),
+    }
+    return settings;
+}
+
+
+fn send_report(subject: &str, text: &str) -> OkErr {
+    let conf = get_email_settings();
+    let mut tr: SmtpTransport;
+    match get_smtp_transport(&conf) {
+        Ok(mailer) => tr = mailer,
+        Err(e) => return OkErr::Err(e),
+    }
+    match EmailBuilder::new()
+              .to(conf.report_email.as_ref())
+              .from(conf.from_email.as_ref())
+              .body(text)
+              .subject(subject)
+              .build() {
+        Ok(email) => {
+            match tr.send(email) {
+                Ok(_) => return OkErr::Ok,
+                Err(e) => return OkErr::Err(e.description().to_string()),
+            }
+        }
+        Err(e) => return OkErr::Err(e.description().to_string()),
+    }
+}
+
+
+
+pub fn get_smtp_transport(config: &EmailSettings) -> Result<SmtpTransport, String> {
+    match SmtpTransportBuilder::new((config.host.as_ref(), config.port)) {
+        Ok(mailer) => {
+            return Ok(mailer
+                          .hello_name(config.from_name.as_ref())
+                          .credentials(config.username.as_ref(), config.password.as_ref())
+                          .security_level(SecurityLevel::AlwaysEncrypt)
+                          .smtp_utf8(true)
+                          .authentication_mechanism(Mechanism::CramMd5)
+                          .connection_reuse(true)
+                          .build())
+        }
+        Err(e) => return Err(e.description().to_string()),
     }
 }

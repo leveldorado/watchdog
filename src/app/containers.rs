@@ -1,6 +1,6 @@
 use std::sync::Mutex;
 use std::collections::HashMap;
-use app::{App, Res, HealthCheckRes};
+use app::{App, Res, HealthCheckRes, MemoryCheckRes};
 use app::config::OkErr;
 use std::error::Error;
 use std::time::Duration;
@@ -92,8 +92,21 @@ fn iter() {
                 let mut app = old.clone();
                 match app.health_check(&client) {
                     HealthCheckRes::Ok => {}
-                    HealthCheckRes::UnHealth => {}
+                    HealthCheckRes::UnHealth => {
+                        if let OkErr::Err(e) = app.restart("UNHEALTH") {
+                            println!("{}", e);
+                        }
+                    }
                     HealthCheckRes::Err(e) => print!("{}", e),
+                }
+                match app.memory_check() {
+                    MemoryCheckRes::Ok => {}
+                    MemoryCheckRes::Exceed(memory) => {
+                        if let OkErr::Err(e) = app.restart(format!("Exceed {}", memory).as_ref()) {
+                            println!("{}", e);
+                        }
+                    }
+                    MemoryCheckRes::Err(e) => print!("{}", e),
                 }
                 checked_containers.push(app);
             }
