@@ -1,0 +1,10 @@
+[package]
+name = "watchdog"
+version = "0.0.1"
+authors = ["Vasyl <leveldorado@gmail.com>"]
+
+[dependencies]
+
+hyper = "0.10.12"
+futures = "0.1"
+tokio-core="0.1.8"
