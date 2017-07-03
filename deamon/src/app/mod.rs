@@ -3,7 +3,7 @@ mod listener;
 mod config;
 mod containers;
 mod proxy;
-pub use self::app::App;
+pub use self::app::{App, Volume};
 pub use self::app::Res;
 pub use self::app::HealthCheckRes;
 pub use self::app::MemoryCheckRes;

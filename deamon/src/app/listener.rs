@@ -9,12 +9,17 @@ use iron::status;
 use app::config::{Config, OkErr};
 use app::config;
 use app::containers;
+use app::proxy;
 use app::App;
 
 extern crate serde_json;
+extern crate serde;
 extern crate urlencoded;
 use self::urlencoded::UrlEncodedQuery;
 use std::io::Read;
+
+
+use self::serde::de;
 
 
 
@@ -36,21 +41,21 @@ fn parse_config(req: &mut Request) -> ParseConfigRes {
 
 enum ParseAppRes {
     Err(IronResult<Response>),
-    Ok(App),
+    Ok,
 }
 
-fn parse_app(req: &mut Request) -> ParseAppRes {
-    let mut payload = String::new();
-    match req.body.read_to_string(&mut payload) {
-        Ok(_) => {
-            let r: Result<App, serde_json::Error> = serde_json::from_str(payload.as_ref());
-            match r {
-                Ok(app) => return ParseAppRes::Ok(app),
-                Err(e) => ParseAppRes::Err(Err(IronError::new(e, status::BadRequest))),
-            }
+fn parse<T>(body: &mut iron::request::Body, ob: &mut T) -> ParseAppRes
+    where for<'a> T: de::Deserialize<'a>
+{
+    let r: Result<T, serde_json::Error> = serde_json::from_reader(body);
+    match r {
+        Ok(app) => {
+            *ob = app;
+            return ParseAppRes::Ok;
         }
         Err(e) => ParseAppRes::Err(Err(IronError::new(e, status::BadRequest))),
     }
+
 }
 
 
@@ -101,8 +106,9 @@ fn register_config_routes(r: &mut router::Router) {
 fn register_containers_routes(r: &mut router::Router) {
     r.post("/app",
            move |req: &mut Request| -> IronResult<Response> {
-        match parse_app(req) {
-            ParseAppRes::Ok(app) => {
+        let mut app: App = App::new();
+        match parse(req.body.by_ref(), &mut app) {
+            ParseAppRes::Ok => {
                 match containers::set_app(app) {
                     OkErr::Ok => return Ok(Response::with(status::Ok)),
                     OkErr::Err(e) => return Ok(Response::with((status::InternalServerError, e))),
@@ -159,11 +165,12 @@ fn register_containers_routes(r: &mut router::Router) {
              "delete_app");
     r.post("/proxy",
            move |req: &mut Request| -> IronResult<Response> {
-        match parse_app(req) {
-            ParseAppRes::Ok(app) => {
-                match containers::set_app(app) {
-                    OkErr::Ok => return Ok(Response::with(status::Ok)),
-                    OkErr::Err(e) => return Ok(Response::with((status::InternalServerError, e))),
+        let mut pr: proxy::Proxy = Default::default();
+        match parse(req.body.by_ref(), &mut pr) {
+            ParseAppRes::Ok => {
+                match proxy::set_proxy(&pr) {
+                    Ok(_) => Ok(Response::with(status::Ok)),
+                    Err(e) => Err(IronError::new(e, status::InternalServerError)),
                 }
             }
             ParseAppRes::Err(resp) => {

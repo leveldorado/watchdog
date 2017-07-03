@@ -1,0 +1,1 @@
+static NOT_FOUND: &str = "Not found";

@@ -19,6 +19,7 @@ use std::str::FromStr;
 use std::net::TcpStream;
 use app::config::OkErr;
 
+
 extern crate lettre;
 
 use self::lettre::transport::smtp::{SecurityLevel, SmtpTransport, SmtpTransportBuilder};
@@ -71,15 +72,17 @@ pub struct App {
     #[serde(skip_deserializing)]
     pub memory_usage: String,
     #[serde(default="Default::default")]
-    volume: Volume,
+    pub volumes: Vec<Volume>,
     #[serde(default="UTC::now")]
     pub started_at: DateTime<UTC>,
 }
 
+
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
-struct Volume {
-    host_path: String,
-    container_path: String,
+pub struct Volume {
+    pub host_path: String,
+    pub container_path: String,
 }
 
 
@@ -105,6 +108,35 @@ pub enum MemoryCheckRes {
 
 
 impl App {
+    pub fn addr(&self) -> String {
+        return format!("http://localhost:{}", self.port);
+    }
+    pub fn new() -> App {
+        return App {
+                   health_check_interval: Duration::new(60, 0),
+                   health_check_interval_in_seconds: 60,
+                   health_check_type: HealthCheckType::HTTP,
+                   health_path: String::new(),
+                   health_count: 0,
+                   id: String::new(),
+                   health_threshould: 2,
+                   image: String::new(),
+                   last_health_check: UTC::now(),
+                   max_restarts: 10,
+                   memory_limit: "500 MiB".to_string(),
+                   memory_limit_in_kilobytes: 500000,
+                   memory_notify_limit: "250 MiB".to_string(),
+                   memory_notify_limit_in_kilobytes: 250000,
+                   memory_usage: String::new(),
+                   name: String::new(),
+                   port: 0,
+                   restarts: 0,
+                   started_at: UTC::now(),
+                   unhealth_count: 0,
+                   unhealth_threshould: 2,
+                   volumes: vec![],
+               };
+    }
     pub fn convert_string_memory_limit_to_kilobytes(&mut self) -> Result<(), String> {
         self.memory_limit_in_kilobytes = parse_memory_usage_to_kilobytes(self.memory_limit
                                                                              .as_ref());
@@ -313,9 +345,9 @@ impl App {
         for var in vars {
             cmd.push(format!("-e {}={}", var.name, var.value))
         }
-        if self.volume.host_path.len() != 0 {
+        for vol in &self.volumes {
             cmd.push("-v".to_string());
-            cmd.push(self.volume.get_v_command());
+            cmd.push(vol.get_v_command());
         }
         return cmd;
     }
