@@ -101,10 +101,8 @@ fn register_config_routes(r: &mut router::Router) {
 fn register_containers_routes(r: &mut router::Router) {
       r.post("/app",
                   move |req: &mut Request| -> IronResult<Response> {
-                      print!("OK");
                       match parse_app(req) {
                           ParseAppRes::Ok(app) => {
-                                println!("{:?}", app);
                                 match containers::set_app(app) {
                                     OkErr::Ok => return Ok(Response::with(status::Ok)),
                                     OkErr::Err(e) => return Ok(Response::with((status::InternalServerError, e))),
@@ -118,23 +116,26 @@ fn register_containers_routes(r: &mut router::Router) {
                   "set_app");  
       r.get("/app",
                   move |req: &mut Request| -> IronResult<Response> {
-                      println!("GET");
                       match req.get_ref::<UrlEncodedQuery>() {
                           Ok(m) => {
                               match m.get("app") {
                                   Some(name) => {
-                                      let app = containers::get_app(name[0].clone());
-                                      match serde_json::to_string(&app) {
-                                         Ok(data) => return Ok(Response::with((status::Ok, data))),
-                                         Err(e) => return Ok(Response::with((status::InternalServerError, e.description()))),
-                                      }
+                                     match containers::get_app(name[0].clone()) {
+                                     Ok(app) => {
+                                          match serde_json::to_string(&app) {
+                                         Ok(data) =>  Ok(Response::with((status::Ok, data))),
+                                         Err(e) => Err(IronError::new(e, status::InternalServerError)),
+                                      }}    
+                                      Err(e) => Err(IronError::new(e, status::InternalServerError))
+                                     }
+
                                   },   
                                   None => {
-                                      return Ok(Response::with(status::BadRequest));
+                                       Ok(Response::with(status::BadRequest))
                                   },
                               }
                           },
-                          Err(e) => return Ok(Response::with((status::InternalServerError, e.description()))),
+                          Err(e) => Err(IronError::new(e, status::InternalServerError)),
                       }
                   },
                   "get_app");   
@@ -142,7 +143,6 @@ fn register_containers_routes(r: &mut router::Router) {
 
       r.delete("/app",
                   move |req: &mut Request| -> IronResult<Response> {
-                      println!("DELETE");
                       match req.get_ref::<UrlEncodedQuery>() {
                           Ok(m) => {
                               match m.get("app") {

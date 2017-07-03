@@ -60,7 +60,7 @@ pub struct App {
     restarts: u32,
     #[serde(skip_deserializing)]
     unhealth_count: u32,
-    #[serde(skip)]
+    #[serde(skip_deserializing)]
     health_count: u32,
     memory_notify_limit: String,
     #[serde(skip_deserializing)]
@@ -68,6 +68,8 @@ pub struct App {
     memory_limit: String,
     #[serde(skip_deserializing)]
     memory_limit_in_kilobytes: u64,
+    #[serde(skip_deserializing)]
+    pub memory_usage: String,
     #[serde(default="Default::default")]
     volume: Volume,
     #[serde(default="UTC::now")]
@@ -113,11 +115,13 @@ impl App {
         }
         return Ok(());
     }
-    pub fn memory_check(&self) -> MemoryCheckRes {
+    pub fn memory_check(&mut self) -> MemoryCheckRes {
         let args: Vec<&str> = vec!["stats", "--no-stream=true", self.id.as_ref()];
         match self.do_command(args) {
             Res::Ok(output) => {
-                let mem_usage = parse_memory_usage(output.as_ref());
+                self.memory_usage = String::new();
+                let output: &str = output.as_ref();
+                let mem_usage = parse_memory_usage(output.trim(), &mut self.memory_usage);
                 if mem_usage > self.memory_limit_in_kilobytes {
                     return MemoryCheckRes::Exceed(mem_usage);
                 }
@@ -291,7 +295,8 @@ impl App {
         let mut s = String::new();
         match cmd.stdout.unwrap().read_to_string(&mut s) {
             Ok(_) => {
-                return Res::Ok(s);
+                let s: &str = s.as_ref();
+                return Res::Ok(s.trim().to_string());
             }
             Err(e) => {
                 return Res::Err(format!("{:?}", e));
@@ -430,7 +435,7 @@ pub fn get_smtp_transport(config: &EmailSettings) -> Result<SmtpTransport, Strin
 }
 
 
-fn parse_memory_usage(docker_output: &str) -> u64 {
+fn parse_memory_usage(docker_output: &str, memory_usage_str: &mut String) -> u64 {
     let parts: Vec<&str> = docker_output.split("\n").collect();
     if parts.len() != 2 {
         return 0;
@@ -447,6 +452,7 @@ fn parse_memory_usage(docker_output: &str) -> u64 {
     match last_part.find("/") {
         Some(index) => {
             let (memory_usage, _) = last_part.split_at(index);
+            memory_usage_str.push_str(memory_usage);
             return parse_memory_usage_to_kilobytes(memory_usage.trim());
         }
         None => {
@@ -461,14 +467,15 @@ fn parse_memory_usage_to_kilobytes(memory_usage: &str) -> u64 {
     if parts.len() != 2 {
         return 0;
     }
-    let number: u64;
-    match parts[0].parse::<u64>() {
+    let number: f32;
+    match parts[0].parse::<f32>() {
         Ok(n) => number = n,
         Err(e) => {
-            number = 0;
-            print!("{}", e);
+            number = 0.0;
+            print!("PARSE {}{}", e, memory_usage);
         }
     }
+    let number: u64 = (number * 100.0) as u64;
     match parts[1] {
         "KiB" => return number,
         "MiB" => return 1000 * number,
