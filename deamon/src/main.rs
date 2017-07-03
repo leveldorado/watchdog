@@ -1,14 +1,14 @@
 mod app;
 
-#[macro_use]  
-extern crate serde_derive;  
+#[macro_use]
+extern crate serde_derive;
 extern crate iron;
 #[macro_use]
 extern crate lazy_static;
-extern crate router;   
+extern crate router;
 
 use std::thread;
- 
+
 
 fn main() {
     println!("Hello!");
@@ -18,9 +18,4 @@ fn main() {
     thread::spawn(app::watch);
     iron::Iron::new(r).http("localhost:3000").unwrap();
     println!("Buy");
-}   
-  
-
-
-
-   
+}
